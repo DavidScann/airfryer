@@ -1,6 +1,6 @@
 # Third-party notices
 
-pressurecooker is distributed under the [MIT License](LICENSE). Its wheel, source distribution, and portable executable do not bundle a Python runtime, FFmpeg, or codecs.
+airfryer is distributed under the [MIT License](LICENSE). Its wheel, source distribution, and portable executable do not bundle a Python runtime, FFmpeg, or codecs.
 
 ## Native executables
 
@@ -8,7 +8,7 @@ Native executables contain CPython, the PyInstaller bootloader, and runtime libr
 
 | Component | License source |
 | --- | --- |
-| pressurecooker | The repository's `LICENSE` file. |
+| airfryer | The repository's `LICENSE` file. |
 | CPython | The build interpreter's `LICENSE.txt` or `LICENSE`; on Debian/Ubuntu, its distribution copyright file under `/usr/share/doc/`. A custom location can be supplied with `--python-license`. |
 | PyInstaller | `COPYING` or `COPYING.txt` from the installed distribution metadata. |
 | Windows runtime dependencies | OpenSSL, zlib or zlib-ng, and liblzma notices in `third_party/licenses/`. The CPython license also includes Microsoft, bzip2, libffi, and Zstandard notices. |
@@ -20,4 +20,4 @@ Keep the accompanying license directory when redistributing a native executable.
 
 ## External dependencies
 
-FFmpeg, ffprobe, and their codecs are installed separately and are not redistributed by pressurecooker. Their licenses depend on the FFmpeg build you install. Intel Quick Sync uses the installed graphics driver.
+FFmpeg, ffprobe, and their codecs are installed separately and are not redistributed by airfryer. Their licenses depend on the FFmpeg build you install. Intel Quick Sync uses the installed graphics driver.
