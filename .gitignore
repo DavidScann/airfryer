@@ -31,3 +31,6 @@ dist/
 # Local work records and editor cruft
 *.log
 .DS_Store
+
+# Git worktrees
+.worktrees/
