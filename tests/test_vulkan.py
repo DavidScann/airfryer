@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pressurecooker import cli
+from airfryer import cli
 
 
 GPU_LIST = """[Vulkan @ 123] GPU listing:
@@ -19,15 +19,6 @@ ENCODE_SUCCESS = "[hevc_vulkan @ 456] Encoder max quality: 3\n"
 
 
 class VulkanDetectionTests(unittest.TestCase):
-    def test_default_and_explicit_vulkan_modes(self):
-        arguments = ["in.mp4", "out.mp4", "-t", "5"]
-        self.assertEqual(cli.parse_args(arguments).hw, "auto")
-        for mode in ("auto", "vulkan", "qsv", "off"):
-            with self.subTest(mode=mode):
-                self.assertEqual(cli.parse_args(arguments + ["--hw", mode]).hw, mode)
-        with self.assertRaises(cli.CliError):
-            cli.parse_args(arguments + ["--hw", "invalid"])
-
     def test_off_skips_gpu_probes(self):
         with patch.object(cli, "_hardware_probe", side_effect=AssertionError):
             self.assertEqual(cli.choose_encoder("hevc", "off", "ffmpeg").name, "libx265")
@@ -134,70 +125,56 @@ class VulkanDetectionTests(unittest.TestCase):
 
 class VulkanCommandTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="pressurecooker-vulkan-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="airfryer-vulkan-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.source = self.root / "video %44211323%.mp4"
         self.source.write_bytes(b"source")
         self.output = self.root / "out.mp4"
-        self.options = cli.Options(source=str(self.source), destination=str(self.output), target_mib=5,
-                                   resolution="hd", fps=30)
-        self.encoder = cli._Encoder("hevc_vulkan", True, "Vulkan", None, 1, 0, "Discrete GPU")
+        self.encoder = cli._Encoder("hevc_vulkan", True, "hardware Vulkan, single-pass bitrate control", None, 1, 0, "Discrete GPU")
         self.commands = []
 
-    def encode(self, command, verbose):
+    def _encode(self, command, verbose):
         self.commands.append(command)
         Path(command[-1]).write_bytes(b"encoded")
         return 0, ""
 
-    def run_plan(self, decode):
+    def _fry(self, decode):
+        self.encoder.decode = decode
+        self.commands = []
         with patch.object(cli, "resolve_tool", side_effect=lambda value, name: name), \
                 patch.object(cli, "choose_encoder", return_value=self.encoder), \
-                patch.object(cli, "probe_duration", return_value=60), \
-                patch.object(cli, "probe_audio", return_value=cli._Audio("aac", 96)), \
-                patch.object(cli, "probe_dimensions", return_value=(1920, 1080)), \
-                patch.object(cli, "probe_vulkan_decode", return_value=(decode, "unsupported source profile")), \
-                patch.object(cli, "_run_encode", side_effect=self.encode), \
+                patch.object(cli, "_run_encode", side_effect=self._encode), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
-            code = cli.run(self.options)
+            code = cli.run(str(self.source), str(self.output))
         self.assertEqual(code, 0)
         return output.getvalue()
 
-    def test_gpu_decode_encode_pipeline_is_single_pass_on_selected_device(self):
-        self.run_plan(True)
+    def test_vulkan_fry_encode_pipeline_is_single_pass_on_selected_device(self):
+        output = self._fry(True)
         self.assertEqual(len(self.commands), 1)
         command = self.commands[0]
         self.assertLess(command.index("-init_hw_device"), command.index("-i"))
         self.assertLess(command.index("-hwaccel"), command.index("-i"))
         self.assertIn("vulkan=pc:1", command)
-        self.assertIn("scale_vulkan=format=nv12:w=1280:h=720,fps=30", command)
+        self.assertIn("scale_vulkan=format=nv12:w=320:h=240,fps=12,format=yuv420p", command)
         self.assertEqual(command[command.index("-quality") + 1], "0")
         self.assertEqual(command[command.index("-rc_mode") + 1], "auto")
-        self.assertEqual(command[command.index("-c:a") + 1], "copy")
+        self.assertEqual(command[command.index("-b:v") + 1], "250k")
+        self.assertEqual(command[command.index("-c:a") + 1], "libmp3lame")
         for option in ("-preset", "-look_ahead", "-pass:v", "-passlogfile:v"):
             self.assertNotIn(option, command)
         self.assertEqual(self.output.read_bytes(), b"encoded")
-        self.assertEqual(list(self.root.glob(".pressurecooker-*")), [])
+        self.assertEqual(list(self.root.glob(".airfryer-*")), [])
 
     def test_decode_failure_keeps_vulkan_encoding_and_uploads_cpu_frames(self):
-        output = self.run_plan(False)
+        output = self._fry(False)
         self.assertEqual(len(self.commands), 1)
         command = self.commands[0]
         self.assertNotIn("-hwaccel", command)
         self.assertIn("hevc_vulkan", command)
-        self.assertIn("scale=1280:720,fps=30,format=nv12,hwupload", command)
-        self.assertIn("Decoder        : software", output)
-        self.assertIn("unsupported source profile", output)
-
-    def test_dry_run_shows_vulkan_command_without_creating_output(self):
-        self.options.dry_run = True
-        self.options.destination = str(self.root / "absent" / "out.mp4")
-        output = self.run_plan(True)
-        self.assertEqual(self.commands, [])
-        self.assertFalse((self.root / "absent").exists())
-        self.assertIn("single pass, Vulkan", output)
-        self.assertIn("Vulkan quality 0", output)
-        self.assertNotIn("Pass 1 command", output)
+        self.assertIn("scale=320:240,fps=12,format=nv12,hwupload", command)
+        self.assertIn("Done:", output)
 
 
 if __name__ == "__main__":

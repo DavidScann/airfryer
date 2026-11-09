@@ -1,4 +1,4 @@
-"""Allow ``python -m pressurecooker`` to reach the same entry point as the console script."""
+"""Allow ``python -m airfryer`` to reach the same entry point as the console script."""
 
 import sys
 
