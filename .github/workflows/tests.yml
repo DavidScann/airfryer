@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            python: "3.12"
+            arch: x64
+          - os: windows-latest
+            python: "3.12"
+            arch: x86
+          - os: ubuntu-latest
+            python: "3.10"
+            arch: x64
+          - os: ubuntu-latest
+            python: "3.12"
+            arch: x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          architecture: ${{ matrix.arch }}
+      - name: Install the package
+        run: python -m pip install .
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+  unittest-linux-i386:
+    name: Debian / Python 3.11 (i386)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test with a 32-bit interpreter
+        run: bash scripts/ci_i386.sh tests

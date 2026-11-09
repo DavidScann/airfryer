@@ -1,0 +1,20 @@
+# Normalize line endings to LF in the repository and working tree.
+* text=auto eol=lf
+
+# Text source
+*.py   text eol=lf
+*.md   text eol=lf
+*.toml text eol=lf
+*.cfg  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+LICENSE text eol=lf
+
+# Binary and generated media should never be line-ending converted
+*.png  binary
+*.jpg  binary
+*.mp4  binary
+*.mkv  binary
+*.webm binary
+*.exe  binary
+*.dll  binary

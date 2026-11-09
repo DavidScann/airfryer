@@ -1,0 +1,8 @@
+include LICENSE THIRD_PARTY_NOTICES.md .gitignore .gitattributes
+recursive-include scripts *.py *.sh
+recursive-include tests *.py
+recursive-include third_party *.txt *.json
+recursive-include .github/workflows *.yml
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod] *.exe *.mp4 *.mkv *.webm

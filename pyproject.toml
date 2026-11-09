@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pressurecooker-video"
+version = "0.1.0"
+description = "Encode a video toward a requested file size using FFmpeg."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["ffmpeg", "ffprobe", "video", "encoding", "hevc", "av1"]
+classifiers = [
+  "Environment :: Console",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Topic :: Multimedia :: Video :: Conversion",
+]
+# The CLI needs only the Python standard library. FFmpeg and ffprobe are
+# installed separately and used from PATH or an explicit flag.
+dependencies = []
+
+[project.scripts]
+pressurecooker = "pressurecooker.cli:main"
+
+[project.optional-dependencies]
+# Build a standalone executable with PyInstaller. Not needed to run the CLI.
+build = ["pyinstaller>=6"]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]

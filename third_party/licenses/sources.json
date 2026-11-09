@@ -1,0 +1,40 @@
+[
+  {
+    "name": "openssl-3.0.19-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.19/LICENSE.txt",
+    "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+    "bytes": 10175
+  },
+  {
+    "name": "zlib-1.3.1-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+    "sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243",
+    "bytes": 1002
+  },
+  {
+    "name": "zlib-ng-2.2.4-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/zlib-ng/zlib-ng/2.2.4/LICENSE.md",
+    "sha256": "6c9f0d975b41afaa34d22f55bb8986ce69e5cb7ad327cb2b28820cd425edf5ee",
+    "bytes": 867
+  },
+  {
+    "name": "xz-5.2.5-COPYING.txt",
+    "url": "https://raw.githubusercontent.com/tukaani-project/xz/v5.2.5/COPYING",
+    "sha256": "bcb02973ef6e87ea73d331b3a80df7748407f17efdb784b61b47e0e610d3bb5c",
+    "bytes": 2775
+  },
+  {
+    "name": "openssl-3.0.16-COPYRIGHT.txt",
+    "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.16/README.md",
+    "section": "Copyright",
+    "sha256": "880bd7835df0cec58f42f55eabf15506f3ef4de2e0edb79ac04d7a9e8f98132f",
+    "bytes": 141
+  },
+  {
+    "name": "openssl-3.0.19-COPYRIGHT.txt",
+    "url": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.0.19/README.md",
+    "section": "Copyright",
+    "sha256": "c27b8ff6f5e903ac785a50b4036c2aa9399924bd34c914d689edb08b9a46e655",
+    "bytes": 141
+  }
+]

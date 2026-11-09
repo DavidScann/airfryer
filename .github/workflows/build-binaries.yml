@@ -1,0 +1,83 @@
+name: build-binaries
+
+# Build packages and executables manually. Attach artifacts for review.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            label: windows-x64
+          - os: windows-latest
+            arch: x86
+            label: windows-x86
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          architecture: ${{ matrix.arch }}
+      - name: Install build tools
+        run: python -m pip install --upgrade pip build ".[build]"
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build the executable
+        run: python scripts/build_binary.py
+      - name: Check the executable
+        run: |
+          $binary = Get-ChildItem dist/pressurecooker-*.exe | Select-Object -First 1
+          & $binary.FullName --version
+      - name: Package release files
+        run: python scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pressurecooker-${{ matrix.label }}
+          path: dist/
+          if-no-files-found: error
+
+  build-linux-x64:
+    name: linux-x64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build packages and executable
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv binutils
+          buildEnv="$RUNNER_TEMP/pressurecooker-build"
+          /usr/bin/python3 -m venv "$buildEnv"
+          "$buildEnv/bin/python" -m pip install build ".[build]"
+          "$buildEnv/bin/python" -m unittest discover -s tests -v
+          "$buildEnv/bin/python" -m build
+          "$buildEnv/bin/python" scripts/build_portable.py
+          "$buildEnv/bin/python" scripts/build_binary.py
+          dist/pressurecooker-0.1.0-linux64 --version
+          "$buildEnv/bin/python" scripts/package_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pressurecooker-linux-x64
+          path: dist/
+          if-no-files-found: error
+
+  build-linux-i386:
+    name: linux-x86
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with a 32-bit interpreter
+        run: bash scripts/ci_i386.sh build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pressurecooker-linux-x86
+          path: dist/
+          if-no-files-found: error
