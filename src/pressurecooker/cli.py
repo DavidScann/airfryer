@@ -19,8 +19,8 @@ BYTES_PER_MIB = 1048576
 AUDIO_CAP_KBPS = 160
 MIN_VIDEO_KBPS = 50
 MUX_SAFETY = 0.97
-QSV_HEADROOM = 0.96
-QSV_PROBE_TIMEOUT = 30
+HARDWARE_HEADROOM = 0.96
+HARDWARE_PROBE_TIMEOUT = 30
 RESOLUTION_MAX = 16384
 
 NAMED_PRESETS = [
@@ -47,6 +47,7 @@ QSV_NUMERIC_PRESET = {
 
 SOFTWARE_ENCODERS = {"h264": "libx264", "hevc": "libx265", "av1": "libsvtav1"}
 QSV_ENCODERS = {"h264": "h264_qsv", "hevc": "hevc_qsv", "av1": "av1_qsv"}
+VULKAN_ENCODERS = {"h264": "h264_vulkan", "hevc": "hevc_vulkan", "av1": "av1_vulkan"}
 
 RESOLUTION_KEYWORDS = {
     "sd": (640, 360), "360p": (640, 360),
@@ -83,6 +84,8 @@ Options:
   -f, --container C     mp4 (default), mkv or webm. Defaults to the destination
                         file extension when it is one of these three.
   -p, --preset P        Encoder preset, default fast.
+                        Vulkan maps names to supported GPU quality levels.
+                        fast and faster names use quality 0 (fastest).
                         libx264/libx265 accept ultrafast..placebo (named).
                         libsvtav1 takes numbers 0-13; names map as:
                         slow=6, medium=7, fast=8, faster=9, veryfast=10,
@@ -93,8 +96,10 @@ Options:
   -s, --resolution R    sd/360p, hd/720p, fullhd/1080p, qhd/1440p, uhd/2160p
                         or WxH (even sizes). Never upscales; default: keep
                         source resolution
-  -q, --hw M            qsv (default), auto or off. qsv/auto probe Intel QSV
-                        for the chosen codec and fall back to software
+  -q, --hw M            auto (default), vulkan, qsv or off. auto/vulkan probe
+                        GPUs for Vulkan Video; fall back to software if none
+                        can encode the chosen codec. qsv selects the legacy
+                        Quick Sync backend; off uses software only
   -d, --dry-run         Print the plan and the ffmpeg command(s), then exit
   -v, --verbose         Stream ffmpeg progress lines live
   -ff, --ffmpeg PATH    Explicit ffmpeg executable (default: PATH)
@@ -106,10 +111,11 @@ Options:
 Audio policy: AAC is copied when the source is AAC and <= 160 kbps (Opus for
 webm); otherwise audio is re-encoded (AAC for mp4/mkv, libopus for webm).
 
-Encoding: H.264/libx264, HEVC/libx265 or AV1/libsvtav1; Intel QSV
-(h264_qsv/hevc_qsv/av1_qsv) is probed and preferred unless --hw off. Software
-encodes use 2-pass ABR; QSV encodes use single-pass VBR (QSV does not provide
-x264-style 2-pass stats). Single video + single audio stream, yuv420p, MP4
+Encoding: Vulkan Video (h264_vulkan/hevc_vulkan/av1_vulkan) is preferred.
+GPU decoding is tested on the source; software decoding is used when needed.
+Software encoders are libx264, libx265 and libsvtav1. Software encoding uses
+2-pass ABR; hardware encoding uses single-pass bitrate control.
+Single video + single audio stream, 8-bit 4:2:0, MP4
 with +faststart when the container is mp4. The finished file is written to a
 temporary path in the destination directory and moved into place only after a
 successful encode, so an existing output is never left half written.
@@ -144,7 +150,7 @@ class Options:
     audio_kbps: int = 128
     fps: float = None
     resolution: str = None
-    hw: str = "qsv"
+    hw: str = "auto"
     dry_run: bool = False
     verbose: bool = False
     ffmpeg: str = None
@@ -257,8 +263,8 @@ def parse_args(argv):
         elif key in ("-q", "--hw"):
             value, i = _take_value(name, argv, i, inline)
             value = value.lower()
-            if value not in ("auto", "qsv", "off"):
-                raise CliError(EXIT_USAGE, "--hw must be auto, qsv or off; got '" + value + "'.", True)
+            if value not in ("auto", "vulkan", "qsv", "off"):
+                raise CliError(EXIT_USAGE, "--hw must be auto, vulkan, qsv or off; got '" + value + "'.", True)
             opts.hw = value
         elif key in ("-d", "--dry-run"):
             opts.dry_run = True
@@ -447,14 +453,21 @@ def describe_preset(requested, resolved, hardware):
 
 def choose_encoder(codec, hw, ffmpeg, preset="fast"):
     software = SOFTWARE_ENCODERS[codec]
-    qsv = QSV_ENCODERS[codec]
     if hw == "off":
         return _Encoder(software, False, "software, 2-pass ABR", None)
+    if hw in ("auto", "vulkan"):
+        quality = resolve_vulkan_quality(preset, codec)
+        encoder, error = probe_vulkan(ffmpeg, VULKAN_ENCODERS[codec], quality)
+        if encoder is not None:
+            return encoder
+        reason = "Vulkan Video unavailable: " + error + "; falling back to " + software + "."
+        return _Encoder(software, False, "software, 2-pass ABR", reason)
+    qsv = QSV_ENCODERS[codec]
     qsv_preset = resolve_preset(preset, codec, True)
     ok, probe_error = probe_qsv(ffmpeg, qsv, qsv_preset)
     if ok:
         return _Encoder(qsv, True, "hardware QSV, single-pass VBR", None)
-    reason = "QSV requested but " + qsv + " probe failed" if hw == "qsv" else "qsv probe failed for " + qsv
+    reason = "QSV requested but " + qsv + " probe failed"
     if probe_error:
         reason += ": " + probe_error
     reason += "; falling back to " + software + "."
@@ -462,11 +475,111 @@ def choose_encoder(codec, hw, ffmpeg, preset="fast"):
 
 
 class _Encoder:
-    def __init__(self, name, hardware, mode_text, warning):
+    def __init__(self, name, hardware, mode_text, warning, device=None, quality=0, device_name=None):
         self.name = name
         self.hardware = hardware
         self.mode_text = mode_text
         self.warning = warning
+        self.backend = "Vulkan" if name.endswith("_vulkan") else "QSV" if hardware else None
+        self.device = device
+        self.device_name = device_name
+        self.quality = quality
+        self.decode = False
+
+
+def resolve_vulkan_quality(preset, codec):
+    resolved = resolve_preset(preset, codec, False)
+    speed = int(resolved) if codec == "av1" else AV1_PRESET_MAP[resolved]
+    return max(0, 8 - speed)
+
+
+def _vulkan_device_args(device):
+    return ["-init_hw_device", "vulkan=pc:" + str(device), "-filter_hw_device", "pc"]
+
+
+def _vulkan_video_args(name, quality, kbps):
+    return ["-c:v", name, "-quality", str(quality), "-rc_mode", "auto", "-b:v", str(kbps) + "k"]
+
+
+def _probe_vulkan_encoder(ffmpeg, name, device, quality):
+    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "verbose"]
+    cmd += _vulkan_device_args(device)
+    cmd += ["-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30:d=0.3",
+            "-vf", "format=nv12,hwupload"]
+    cmd += _vulkan_video_args(name, quality, 1000)
+    cmd += ["-an", "-f", "null", os.devnull]
+    return _hardware_probe(cmd)
+
+
+def _vulkan_error(stderr):
+    for line in stderr.splitlines():
+        if re.search(r"not support|unsupported|unknown encoder|not found|error|fail|timed out", line, re.I):
+            return re.sub(r"^(?:\[[^\]]+\]\s*)+", "", line).strip()
+    return _first_meaningful_line(stderr) or "probe failed"
+
+
+def probe_vulkan(ffmpeg, name, quality):
+    first = _probe_vulkan_encoder(ffmpeg, name, 0, 0)
+    # FFmpeg prints the complete physical-device list before selecting an index.
+    devices = re.findall(r"^\[[^\]]+\]\s+(\d+):\s+(.+?)\s+\([^()]+\)\s+\(0x[0-9a-f]+\)\s*$",
+                         first[1], re.M | re.I)
+    devices = [(int(index), label) for index, label in devices] or [(0, "GPU 0")]
+    errors = []
+    for device, label in devices:
+        ok, stderr = first if device == 0 else _probe_vulkan_encoder(ffmpeg, name, device, 0)
+        if not ok:
+            error = _vulkan_error(stderr)
+            if "unknown encoder" in error.lower():
+                return None, error
+            errors.append("GPU " + str(device) + ": " + error)
+            continue
+        levels = re.search(r"Encoder max quality:\s*(\d+)", stderr)
+        selected = min(quality, max(0, int(levels[1]) - 1)) if levels else 0
+        warning = None
+        if selected:
+            ok, stderr = _probe_vulkan_encoder(ffmpeg, name, device, selected)
+            if not ok:
+                warning = "Vulkan quality " + str(selected) + " unavailable; using quality 0: " + _vulkan_error(stderr)
+                selected = 0
+        return _Encoder(name, True, "hardware Vulkan, single-pass bitrate control", warning,
+                        device, selected, label), None
+    return None, "; ".join(errors)
+
+
+def _vulkan_filter(filters, decode):
+    if not decode:
+        return ",".join(filters + ["format=nv12", "hwupload"])
+    scale = "scale_vulkan=format=nv12"
+    for value in filters:
+        if value.startswith("scale="):
+            width, height = value[6:].split(":")
+            scale += ":w=" + width + ":h=" + height
+    return ",".join([scale] + [value for value in filters if not value.startswith("scale=")])
+
+
+def _vulkan_decode_args():
+    return ["-hwaccel", "vulkan", "-hwaccel_device", "pc", "-hwaccel_output_format", "vulkan"]
+
+
+def probe_vulkan_decode(ffmpeg, source, encoder, filters, kbps):
+    cmd = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error"]
+    cmd += _vulkan_device_args(encoder.device) + _vulkan_decode_args()
+    cmd += ["-i", source, "-map", "0:v:0", "-vf", _vulkan_filter(filters, True)]
+    cmd += _vulkan_video_args(encoder.name, encoder.quality, kbps)
+    cmd += ["-frames:v", "8", "-an", "-f", "null", os.devnull]
+    ok, stderr = _hardware_probe(cmd)
+    return ok, _vulkan_error(stderr) if not ok else None
+
+
+def _hardware_probe(cmd):
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=HARDWARE_PROBE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, "probe timed out"
+    except OSError as err:
+        return False, str(err)
+    return proc.returncode == 0, proc.stderr or ""
 
 
 def probe_qsv(ffmpeg, encoder, preset="fast"):
@@ -476,14 +589,8 @@ def probe_qsv(ffmpeg, encoder, preset="fast"):
     if encoder in ("h264_qsv", "hevc_qsv"):
         cmd += ["-look_ahead", "1"]
     cmd += ["-f", "null", os.devnull]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=QSV_PROBE_TIMEOUT)
-    except subprocess.TimeoutExpired:
-        return False, "probe timed out"
-    except OSError as err:
-        return False, str(err)
-    return proc.returncode == 0, _first_meaningful_line(proc.stderr)
+    ok, stderr = _hardware_probe(cmd)
+    return ok, _first_meaningful_line(stderr)
 
 
 def _capture(cmd):
@@ -655,8 +762,13 @@ def run(opts):
     ffprobe = resolve_tool(opts.ffprobe, "ffprobe")
 
     encoder = choose_encoder(opts.codec, opts.hw, ffmpeg, opts.preset)
-    preset_arg = resolve_preset(opts.preset, opts.codec, encoder.hardware)
+    if encoder.backend == "Vulkan":
+        preset_arg = str(encoder.quality)
+    else:
+        preset_arg = resolve_preset(opts.preset, opts.codec, encoder.hardware)
     preset_text = describe_preset(opts.preset, preset_arg, encoder.hardware)
+    if encoder.backend == "Vulkan":
+        preset_text = "Vulkan quality " + preset_text
 
     duration = probe_duration(ffprobe, source_full)
     audio = probe_audio(ffprobe, source_full)
@@ -711,11 +823,20 @@ def run(opts):
     if not math.isfinite(raw_video_kbps):
         raise CliError(EXIT_USAGE, "Cannot compute a video bitrate: values are out of range.")
     video_kbps = math.floor(raw_video_kbps)
-    encode_kbps = max(MIN_VIDEO_KBPS, math.floor(video_kbps * QSV_HEADROOM)) if encoder.hardware else video_kbps
+    encode_kbps = max(MIN_VIDEO_KBPS, math.floor(video_kbps * HARDWARE_HEADROOM)) if encoder.hardware else video_kbps
+
+    if encoder.backend == "Vulkan":
+        if video_kbps >= MIN_VIDEO_KBPS:
+            encoder.decode, decode_error = probe_vulkan_decode(ffmpeg, source_full, encoder, filters, encode_kbps)
+            if not encoder.decode:
+                warnings.append("Vulkan decoding unavailable; using software decoding: " + decode_error)
+        filter_arg = _vulkan_filter(filters, encoder.decode)
 
     log_prefix = _new_log_prefix()
     video_args = ["-c:v", encoder.name]
-    if encoder.hardware:
+    if encoder.backend == "Vulkan":
+        video_args = _vulkan_video_args(encoder.name, encoder.quality, encode_kbps)
+    elif encoder.hardware:
         video_args += ["-preset", preset_arg, "-b:v", str(encode_kbps) + "k"]
         if encoder.name in ("h264_qsv", "hevc_qsv"):
             video_args += ["-look_ahead", "1"]
@@ -734,7 +855,12 @@ def run(opts):
 
     map_audio = ["-map", "0:a:0"] if audio is not None else []
     muxer = MUXER_BY_CONTAINER[container]
-    base = [ffmpeg, "-nostdin", "-y", "-hide_banner", "-i", source_full, "-map", "0:v:0"]
+    base = [ffmpeg, "-nostdin", "-y", "-hide_banner"]
+    if encoder.backend == "Vulkan":
+        base += _vulkan_device_args(encoder.device)
+        if encoder.decode:
+            base += _vulkan_decode_args()
+    base += ["-i", source_full, "-map", "0:v:0"]
 
     pass1 = base + video_args + _pass_args(encoder.name, 1, log_prefix) + ["-an", "-f", "null", os.devnull]
     pass2 = base + map_audio + video_args + _pass_args(encoder.name, 2, log_prefix) + audio_args
@@ -755,7 +881,7 @@ def run(opts):
     if opts.dry_run:
         print()
         if encoder.hardware:
-            print("Encode command (single pass, QSV):")
+            print("Encode command (single pass, " + encoder.backend + "):")
             print("  " + _format_command(single + ["-f", muxer, out_file]))
         else:
             print("Pass 1 command:")
@@ -777,7 +903,7 @@ def _print_plan(opts, container, out_file, source_full, encoder, preset_text, fi
                 video_kbps, encode_kbps, warnings):
     line = "=" * 60
     print(line)
-    print(" pressurecooker - DRY RUN (nothing will be encoded)" if opts.dry_run else " pressurecooker - encode")
+    print(" pressurecooker - DRY RUN (no output file)" if opts.dry_run else " pressurecooker - encode")
     print(line)
     for warning in warnings:
         print("WARNING: " + warning)
@@ -785,6 +911,9 @@ def _print_plan(opts, container, out_file, source_full, encoder, preset_text, fi
     print("Destination    : " + out_file)
     print("Container      : " + container + (" (faststart on)" if container == "mp4" else " (no faststart)"))
     print("Encoder        : " + encoder.name + " (" + encoder.mode_text + ")")
+    print("Decoder        : " + ("Vulkan" if encoder.decode else "software"))
+    if encoder.device_name:
+        print("GPU            : " + encoder.device_name + " (Vulkan device " + str(encoder.device) + ")")
     print("Preset         : " + preset_text)
     print("Filters        : " + (filter_arg or "none"))
     print("Duration       : " + _fmt(duration, 3) + " s")
@@ -806,7 +935,7 @@ def _print_plan(opts, container, out_file, source_full, encoder, preset_text, fi
           + _fmt(audio_budget, 3) + ") * 0.97)")
     if video_kbps >= MIN_VIDEO_KBPS:
         print("Encode bitrate : " + str(encode_kbps) + " kbps ("
-              + ("QSV single-pass, extra 0.96 headroom" if encoder.hardware else "software 2-pass ABR") + ")")
+              + (encoder.backend + " single-pass, extra 0.96 headroom" if encoder.hardware else "software 2-pass ABR") + ")")
     print()
 
 
@@ -827,7 +956,7 @@ def _encode(opts, encoder, container, muxer, pass1, pass2, single,
         failure = None
         stderr_text = ""
         if encoder.hardware:
-            print("Encoding (single pass, QSV)...")
+            print("Encoding (single pass, " + encoder.backend + ")...")
             code, stderr_text = _run_encode(single + ["-f", muxer, tmp_path], opts.verbose)
             if code != 0:
                 failure = "ffmpeg failed with exit code " + str(code) + "."

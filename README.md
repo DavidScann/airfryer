@@ -1,6 +1,6 @@
 # pressurecooker
 
-Command-line video encoding toward a requested file size, using FFmpeg. The default is HEVC with Intel Quick Sync, a fast preset, and software fallback when Quick Sync is unavailable.
+Command-line video encoding toward a requested file size, using FFmpeg. The default is HEVC with Vulkan Video GPU detection, a fast preset, and software fallback when GPU encoding is unavailable.
 
 pressurecooker calculates a video and audio bitrate budget from the source duration. It reports the finished size and warns when the output exceeds the target. Encoder rate control and container overhead can cause the result to differ from the requested size.
 
@@ -22,9 +22,11 @@ pressurecooker calculates a video and audio bitrate budget from the source durat
 | --- | --- |
 | FFmpeg and ffprobe | Every installation; installed separately. |
 | Python 3.10 or newer | Python package and portable executable. Native executables include Python. |
-| Intel graphics hardware and a compatible driver | Quick Sync encoding. Software encoding remains available. |
+| GPU and driver with Vulkan Video encoding support | GPU encoding. Software encoding remains available. |
 
-The CLI has no third-party Python runtime dependencies. The FFmpeg build must contain the selected encoder: `libx264`, `libx265`, or `libsvtav1` for software; `h264_qsv`, `hevc_qsv`, or `av1_qsv` for Quick Sync. Software AV1 requires an FFmpeg build with SVT-AV1 two-pass integration; older builds may include the encoder without supporting two passes.
+The CLI has no third-party Python runtime dependencies. The FFmpeg build must contain the selected encoder: `libx264`, `libx265`, or `libsvtav1` for software; `h264_vulkan`, `hevc_vulkan`, or `av1_vulkan` for GPU encoding. Check `ffmpeg -encoders` for the available encoders. Vulkan Video uses the GPU's video hardware through its driver; support depends on the device, driver, and codec. General Vulkan graphics support alone is insufficient.
+
+Software AV1 requires an FFmpeg build with SVT-AV1 two-pass integration; older builds may include the encoder without supporting two passes.
 
 Install FFmpeg with your system package manager, for example:
 
@@ -184,7 +186,7 @@ pressurecooker video.mp4 output/ -t 50 --dry-run
 | `-a`, `--audio-kbps N` | `128` | Positive audio bitrate for re-encoding. |
 | `-r`, `--fps N` | Source | Positive frame rate, up to 1000. |
 | `-s`, `--resolution R` | Source | Resolution alias or `WxH`. |
-| `-q`, `--hw M` | `qsv` | `qsv`, `auto`, or `off`. |
+| `-q`, `--hw M` | `auto` | `auto` or `vulkan`: detect Vulkan Video GPUs; `off`: software; `qsv`: legacy backend. |
 | `-d`, `--dry-run` | Off | Print the plan and FFmpeg commands. |
 | `-v`, `--verbose` | Off | Display FFmpeg progress. |
 | `-ff`, `--ffmpeg PATH` | PATH | FFmpeg executable path. |
@@ -199,7 +201,9 @@ An explicit container must agree with the destination's recognized extension. Us
 
 ### Presets and scaling
 
-Named presets are `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`, and `placebo`. H.264 and HEVC use these names directly. For SVT-AV1 they map to 12, 11, 10, 9, 8, 7, 6, 5, 4, and 3 respectively. Quick Sync maps unsupported extremes to `veryfast` or `veryslow`.
+Named presets are `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`, and `placebo`. Software H.264 and HEVC use these names directly. For SVT-AV1 they map to 12, 11, 10, 9, 8, 7, 6, 5, 4, and 3 respectively.
+
+Vulkan uses FFmpeg's `-quality` option. `fast` and faster presets map to level 0; `medium`, `slow`, `slower`, `veryslow`, and `placebo` request levels 1 through 5. AV1 numeric presets map to `max(0, 8 - N)`. The requested level is capped at the GPU's highest supported level. Higher levels trade speed for quality, with the available levels defined by the driver. The encoding plan reports the selected level and GPU.
 
 Resolution aliases are `sd`/`360p` (640x360), `hd`/`720p` (1280x720), `fullhd`/`1080p` (1920x1080), `qhd`/`1440p` (2560x1440), and `uhd`/`2160p` (3840x2160). Explicit dimensions round down to even numbers. Requests exceeding either source dimension keep the original resolution. Frame rate stays unchanged unless requested.
 
@@ -212,13 +216,15 @@ total_kbps = target_MiB * 8388.608 / duration
 video_kbps = floor((total_kbps - audio_kbps) * 0.97)
 ```
 
-A video budget below 50 kbps is rejected. Software encoding uses two passes. Quick Sync uses one pass with an additional 0.96 bitrate factor. MP4 output includes `faststart`.
+A video budget below 50 kbps is rejected. Software encoding uses two passes. GPU encoding uses one pass with an additional 0.96 bitrate factor. MP4 output includes `faststart`.
 
-Quick Sync is tested with a short null-device encode. If initialization fails, `qsv` and `auto` select the corresponding software encoder and print the reason. `--hw off` skips the probe. HEVC and AV1 playback depends on the receiving application and device.
+The default `auto` mode probes the GPUs listed by FFmpeg and selects the first that can encode the chosen codec through Vulkan Video. If none succeeds, it selects the corresponding software encoder and prints the reason. `--hw vulkan` follows the same selection and fallback policy. `--hw off` skips GPU probes.
+
+With Vulkan encoding, a short decode-and-encode probe checks the source on the selected GPU. Supported sources use Vulkan decoding and scaling. If that probe fails, encoding stays on the GPU while decoding and scaling use software. Both probe types discard their output. HEVC and AV1 playback depends on the receiving application and device.
 
 ### Output handling and exit codes
 
-Existing output is refused unless `--overwrite` is set. Source files and their symlink or hardlink aliases cannot be destinations. Encoding uses unique temporary output and statistics files; output is finalized after success, and failures or Ctrl-C remove temporary files. A dry run creates no files or directories; the optional Quick Sync probe writes to the null device.
+Existing output is refused unless `--overwrite` is set. Source files and their symlink or hardlink aliases cannot be destinations. Encoding uses unique temporary output and statistics files; output is finalized after success, and failures or Ctrl-C remove temporary files. A dry run creates no files or directories; GPU probes write to the null device.
 
 | Exit code | Meaning |
 | --- | --- |
