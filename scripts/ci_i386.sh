@@ -8,7 +8,7 @@ case "$mode" in
   *) exit 2 ;;
 esac
 
-ciRoot="$(mktemp -d "$RUNNER_TEMP/pressurecooker-i386.XXXXXX")"
+ciRoot="$(mktemp -d "$RUNNER_TEMP/airfryer-i386.XXXXXX")"
 container=""
 cleanup() {
   if [[ -n "$container" ]]; then docker rm "$container" >/dev/null || true; fi
@@ -32,17 +32,17 @@ sudo chroot "$ciRoot" /bin/sh -eu -c "apt-get update; apt-get install -y --no-in
 sudo chroot "$ciRoot" /usr/bin/python3 -c 'import struct; assert struct.calcsize("P") == 4; print("Python pointer width: 32 bits")'
 sudo chroot "$ciRoot" /bin/sh -eu -c '
   cd /work
-  python3 -m venv /tmp/pressurecooker-ci
-  /tmp/pressurecooker-ci/bin/python -m pip install .
-  /tmp/pressurecooker-ci/bin/python -m unittest discover -s tests -v
+  python3 -m venv /tmp/airfryer-ci
+  /tmp/airfryer-ci/bin/python -m pip install .
+  /tmp/airfryer-ci/bin/python -m unittest discover -s tests -v
 '
 if [[ "$mode" == build ]]; then
   sudo chroot "$ciRoot" /bin/sh -eu -c '
     cd /work
-    /tmp/pressurecooker-ci/bin/python -m pip install ".[build]"
-    /tmp/pressurecooker-ci/bin/python scripts/build_binary.py
-    dist/pressurecooker-0.1.0-linux32 --version
-    /tmp/pressurecooker-ci/bin/python scripts/package_release.py
+    /tmp/airfryer-ci/bin/python -m pip install ".[build]"
+    /tmp/airfryer-ci/bin/python scripts/build_binary.py
+    dist/airfryer-0.1.0-linux32 --version
+    /tmp/airfryer-ci/bin/python scripts/package_release.py
   '
   mkdir -p dist
   sudo cp -a "$ciRoot/work/dist/." dist/

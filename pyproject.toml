@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pressurecooker-video"
+name = "airfryer"
 version = "0.1.0"
-description = "Encode a video toward a requested file size using FFmpeg."
+description = "Deep fry a video into a degraded mess using FFmpeg."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -22,7 +22,7 @@ classifiers = [
 dependencies = []
 
 [project.scripts]
-pressurecooker = "pressurecooker.cli:main"
+airfryer = "airfryer.cli:main"
 
 [project.optional-dependencies]
 # Build a standalone executable with PyInstaller. Not needed to run the CLI.

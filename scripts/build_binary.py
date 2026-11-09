@@ -1,4 +1,4 @@
-"""Build a native pressurecooker executable with bundled license notices.
+"""Build a native airfryer executable with bundled license notices.
 
 Output uses the current operating system and interpreter architecture.
 FFmpeg and ffprobe must be installed separately.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
-ENTRY = ROOT / "scripts" / "pressurecooker_entry.py"
+ENTRY = ROOT / "scripts" / "airfryer_entry.py"
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 LICENSE_STAGE = BUILD / "licenses"
@@ -30,7 +30,7 @@ VERSION = "0.1.0"
 def build_name():
     """Name the binary after the pointer width and OS of this interpreter."""
     arch = struct.calcsize("P") * 8  # 4 or 8 bytes -> 32 or 64 bit
-    return f"pressurecooker-{VERSION}-{platform.system().lower()}{arch}"
+    return f"airfryer-{VERSION}-{platform.system().lower()}{arch}"
 
 
 def _first_existing(candidates):

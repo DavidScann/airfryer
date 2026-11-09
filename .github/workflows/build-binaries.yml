@@ -35,13 +35,13 @@ jobs:
         run: python scripts/build_binary.py
       - name: Check the executable
         run: |
-          $binary = Get-ChildItem dist/pressurecooker-*.exe | Select-Object -First 1
+          $binary = Get-ChildItem dist/airfryer-*.exe | Select-Object -First 1
           & $binary.FullName --version
       - name: Package release files
         run: python scripts/package_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: pressurecooker-${{ matrix.label }}
+          name: airfryer-${{ matrix.label }}
           path: dist/
           if-no-files-found: error
 
@@ -54,18 +54,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-venv binutils
-          buildEnv="$RUNNER_TEMP/pressurecooker-build"
+          buildEnv="$RUNNER_TEMP/airfryer-build"
           /usr/bin/python3 -m venv "$buildEnv"
           "$buildEnv/bin/python" -m pip install build ".[build]"
           "$buildEnv/bin/python" -m unittest discover -s tests -v
           "$buildEnv/bin/python" -m build
           "$buildEnv/bin/python" scripts/build_portable.py
           "$buildEnv/bin/python" scripts/build_binary.py
-          dist/pressurecooker-0.1.0-linux64 --version
+          dist/airfryer-0.1.0-linux64 --version
           "$buildEnv/bin/python" scripts/package_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: pressurecooker-linux-x64
+          name: airfryer-linux-x64
           path: dist/
           if-no-files-found: error
 
@@ -78,6 +78,6 @@ jobs:
         run: bash scripts/ci_i386.sh build
       - uses: actions/upload-artifact@v4
         with:
-          name: pressurecooker-linux-x86
+          name: airfryer-linux-x86
           path: dist/
           if-no-files-found: error
