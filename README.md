@@ -4,6 +4,35 @@ Command-line video encoding toward a requested file size, using FFmpeg. The defa
 
 pressurecooker calculates a video and audio bitrate budget from the source duration. It reports the finished size and warns when the output exceeds the target. Encoder rate control and container overhead can cause the result to differ from the requested size.
 
+## Quick start
+
+Install Python 3.10+, Git, and [FFmpeg with ffprobe](#requirements). Keep FFmpeg and ffprobe on PATH, then clone the repository:
+
+```text
+git clone https://github.com/maxie-maxie/pressurecooker.git
+cd pressurecooker
+```
+
+Install and encode a video with a 25 MiB target.
+
+Linux:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/pressurecooker video.mp4 output.mp4 -t 25
+```
+
+Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\pressurecooker.exe video.mp4 output.mp4 -t 25
+```
+
+Replace `video.mp4` with your file. Use `--help` to list flags.
+
 ## Contents
 
 - [Requirements](#requirements)
