@@ -41,7 +41,11 @@ if [[ "$mode" == build ]]; then
     cd /work
     /tmp/airfryer-ci/bin/python -m pip install ".[build]"
     /tmp/airfryer-ci/bin/python scripts/build_binary.py
-    dist/airfryer-0.1.0-linux32 --version
+    if dist/airfryer-0.1.0-linux32; then
+      exit 1
+    else
+      test "$?" -eq 2
+    fi
     /tmp/airfryer-ci/bin/python scripts/package_release.py
   '
   mkdir -p dist

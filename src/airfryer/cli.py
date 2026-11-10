@@ -18,7 +18,17 @@ FRY_VIDEO_KBPS = 250
 FRY_AUDIO_KBPS = 32
 FRY_LOUDNESS_I = -16
 FRY_CONTAINER = "mp4"
-FRY_FILTERS = ["scale=320:240", "fps=12", "format=yuv420p"]
+FRY_FILTERS = [
+    "scale=320:240:flags=neighbor",
+    "setsar=1",
+    "fps=" + str(FRY_FPS),
+    "scale=out_range=tv",
+    "format=yuv420p",
+    "eq=contrast=1.6:brightness=-0.08:saturation=1.8",
+    "lut=y='clip(floor(val/16)*16,16,235)':u='clip(floor(val/32)*32,16,240)':v='clip(floor(val/32)*32,16,240)'",
+    "setparams=range=limited",
+]
+FRY_AUDIO_FILTER = "volume=4,asoftclip=type=hard:threshold=0.2,loudnorm=I=" + str(FRY_LOUDNESS_I) + ":TP=-2:LRA=7"
 
 NAMED_PRESETS = [
     "ultrafast", "superfast", "veryfast", "faster", "fast",
@@ -110,7 +120,13 @@ def run(source, destination):
     ffmpeg = resolve_tool(None, "ffmpeg")
     resolve_tool(None, "ffprobe")
 
-    encoder = choose_encoder("hevc", "auto", ffmpeg, preset="fast")
+    encoder = choose_encoder("auto", "auto", ffmpeg, preset="fast")
+    if encoder.warning:
+        print("WARNING: " + encoder.warning)
+    if encoder.backend == "Vulkan":
+        encoder.decode, decode_error = probe_vulkan_decode(ffmpeg, source_full, encoder, FRY_FILTERS, FRY_VIDEO_KBPS)
+        if not encoder.decode:
+            print("WARNING: Vulkan decoding unavailable; using software decoding: " + str(decode_error))
 
     if out_dir:
         try:
@@ -124,22 +140,24 @@ def run(source, destination):
         os.close(fd)
 
         cmd = [ffmpeg, "-nostdin", "-y", "-hide_banner"]
-        filter_chain = None
         if encoder.backend == "Vulkan":
             cmd += _vulkan_device_args(encoder.device)
             if encoder.decode:
                 cmd += _vulkan_decode_args()
-            cmd += _vulkan_video_args(encoder.name, encoder.quality, FRY_VIDEO_KBPS)
-            filters = FRY_FILTERS if encoder.decode else ["scale=320:240", "fps=12"]
-            filter_chain = _vulkan_filter(filters, encoder.decode)
-        else:
-            cmd += ["-c:v", "libx265", "-preset", "fast", "-b:v", str(FRY_VIDEO_KBPS) + "k", "-pix_fmt", "yuv420p"]
-            filter_chain = ",".join(FRY_FILTERS)
         cmd += ["-i", source_full, "-map", "0:v:0"]
+        if encoder.backend == "Vulkan":
+            cmd += _vulkan_video_args(encoder.name, encoder.quality, FRY_VIDEO_KBPS)
+            filter_chain = _vulkan_filter(FRY_FILTERS, encoder.decode)
+        else:
+            cmd += ["-c:v", encoder.name, "-preset", "fast", "-b:v", str(FRY_VIDEO_KBPS) + "k", "-pix_fmt", "yuv420p"]
+            filter_chain = ",".join(FRY_FILTERS)
+        if encoder.name in ("hevc_vulkan", "libx265"):
+            cmd += ["-tag:v", "hvc1"]
+        cmd += ["-color_range", "tv"]
         cmd += ["-vf", filter_chain]
-        cmd += ["-c:a", "libmp3lame", "-b:a", str(FRY_AUDIO_KBPS) + "k", "-af",
-                "volume=2.0,loudnorm=I=" + str(FRY_LOUDNESS_I)]
+        cmd += ["-c:a", "libmp3lame", "-b:a", str(FRY_AUDIO_KBPS) + "k", "-ac", "1", "-ar", "22050", "-af", FRY_AUDIO_FILTER]
         cmd += ["-map", "0:a:0?"]
+        cmd += ["-movflags", "+faststart"]
         cmd += ["-f", FRY_CONTAINER, tmp_path]
 
         code, stderr_text = _run_encode(cmd, False)
@@ -177,11 +195,15 @@ def run(source, destination):
 
 def resolve_destination(source_full, destination):
     full = os.path.abspath(destination)
-    if os.path.isdir(full):
+    extension = os.path.splitext(full)[1].lower()
+    is_directory = os.path.isdir(full) or destination.endswith(("/", "\\")) or extension not in {".mp4", ".mkv", ".webm"}
+    if is_directory:
         source_base = os.path.splitext(os.path.basename(source_full))[0]
         out_file = os.path.join(full, source_base + ".fry." + FRY_CONTAINER)
         out_dir = full
     else:
+        if extension != ".mp4":
+            raise CliError(EXIT_USAGE, "The fixed output container is MP4; use a .mp4 filename or a directory.")
         out_file = full
         out_dir = os.path.dirname(out_file)
     _reject_source_alias(out_file, source_full)
@@ -229,7 +251,7 @@ def resolve_tool(explicit, name):
     found = shutil.which(name)
     if not found:
         raise CliError(EXIT_MISSING_TOOL,
-                       name + " was not found on PATH. Install ffmpeg or pass --" + name + " <path>.")
+                       name + " was not found on PATH. Install FFmpeg and add its executables to PATH.")
     return _tool_path(found, name)
 
 
@@ -325,11 +347,15 @@ def _vulkan_filter(filters, decode):
     if not decode:
         return ",".join(filters + ["format=nv12", "hwupload"])
     scale = "scale_vulkan=format=nv12"
-    for value in filters:
-        if value.startswith("scale="):
-            width, height = value[6:].split(":")
-            scale += ":w=" + width + ":h=" + height
-    return ",".join([scale] + [value for value in filters if not value.startswith("scale=")])
+    remaining = list(filters)
+    if remaining and remaining[0].startswith("scale="):
+        width, height = remaining.pop(0)[6:].split(":")[:2]
+        scale += ":w=" + width + ":h=" + height
+        if "flags=neighbor" in filters[0]:
+            scale += ":scaler=nearest"
+    # The colour effects need CPU frames. Keep GPU decoding/scaling/encoding
+    # and transfer only the small, scaled frames for those filters.
+    return ",".join([scale, "hwdownload", "format=nv12"] + remaining + ["format=nv12", "hwupload"])
 
 
 def _vulkan_decode_args():
@@ -410,16 +436,28 @@ class _Encoder:
 
 
 def choose_encoder(codec, hw, ffmpeg, preset="fast"):
+    if codec == "auto":
+        first_software = None
+        failures = []
+        for candidate in ("hevc", "h264", "av1"):
+            encoder = choose_encoder(candidate, hw, ffmpeg, preset)
+            if encoder.hardware or hw == "off":
+                return encoder
+            if first_software is None:
+                first_software = encoder
+            failures.append(candidate.upper() + ": " + str(encoder.warning))
+        first_software.warning = "; ".join(failures)
+        return first_software
     software = SOFTWARE_ENCODERS[codec]
     if hw == "off":
-        return _Encoder(software, False, "software, 2-pass ABR", None)
+        return _Encoder(software, False, "software, single-pass bitrate control", None)
     if hw in ("auto", "vulkan"):
         quality = resolve_vulkan_quality(preset, codec)
         encoder, error = probe_vulkan(ffmpeg, VULKAN_ENCODERS[codec], quality)
         if encoder is not None:
             return encoder
         reason = "Vulkan Video unavailable: " + error + "; falling back to " + software + "."
-        return _Encoder(software, False, "software, 2-pass ABR", reason)
+        return _Encoder(software, False, "software, single-pass bitrate control", reason)
     qsv = QSV_ENCODERS[codec]
     qsv_preset = resolve_preset(preset, codec, True)
     ok, probe_error = probe_qsv(ffmpeg, qsv, qsv_preset)
@@ -429,7 +467,7 @@ def choose_encoder(codec, hw, ffmpeg, preset="fast"):
     if probe_error:
         reason += ": " + probe_error
     reason += "; falling back to " + software + "."
-    return _Encoder(software, False, "software, 2-pass ABR", reason)
+    return _Encoder(software, False, "software, single-pass bitrate control", reason)
 
 
 def probe_qsv(ffmpeg, encoder, preset="fast"):

@@ -18,10 +18,12 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(cli._positionals(["in.mp4", "out.mp4"]), ("in.mp4", "out.mp4"))
 
     def test_unknown_option_is_rejected(self):
-        self.assertEqual(cli.main(["in.mp4", "out.mp4", "--target-mb", "5"]), 2)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["in.mp4", "out.mp4", "--target-mb", "5"]), 2)
 
     def test_extra_argument_is_rejected(self):
-        self.assertEqual(cli.main(["in.mp4", "out.mp4", "extra.mp4"]), 2)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(cli.main(["in.mp4", "out.mp4", "extra.mp4"]), 2)
 
 
 class FryTests(unittest.TestCase):
@@ -33,6 +35,9 @@ class FryTests(unittest.TestCase):
         self.source.write_bytes(b"source")
         self.output = self.root / "out.mp4"
         self.commands = []
+        decode_probe = patch.object(cli, "probe_vulkan_decode", return_value=(True, None))
+        decode_probe.start()
+        self.addCleanup(decode_probe.stop)
 
     def _encode(self, command, verbose):
         self.commands.append(command)
@@ -60,21 +65,28 @@ class FryTests(unittest.TestCase):
         self.assertLess(command.index("-init_hw_device"), command.index("-i"))
         self.assertLess(command.index("-hwaccel"), command.index("-i"))
         self.assertIn("vulkan=pc:1", command)
-        self.assertIn("scale_vulkan=format=nv12:w=320:h=240,fps=12,format=yuv420p", command)
+        filters = command[command.index("-vf") + 1]
+        self.assertTrue(filters.startswith("scale_vulkan=format=nv12:w=320:h=240"))
+        self.assertIn("hwdownload,format=nv12", filters)
+        self.assertTrue(filters.endswith("format=nv12,hwupload"))
         self.assertEqual(command[command.index("-quality") + 1], "0")
         self.assertEqual(command[command.index("-rc_mode") + 1], "auto")
         self.assertEqual(command[command.index("-b:v") + 1], "250k")
         self.assertEqual(command[command.index("-c:a") + 1], "libmp3lame")
         self.assertEqual(command[command.index("-b:a") + 1], "32k")
-        self.assertEqual(command[command.index("-af") + 1], "volume=2.0,loudnorm=I=-16")
+        self.assertIn("asoftclip=type=hard", command[command.index("-af") + 1])
+        self.assertIn("loudnorm=I=-16:TP=-2", command[command.index("-af") + 1])
         self.assertEqual(command[command.index("-f") + 1], "mp4")
         self.assertEqual(self.output.read_bytes(), b"finished")
         self.assertEqual(list(self.root.glob(".airfryer-*")), [])
 
     def test_software_fry_command_low_bitrate_and_range(self):
-        command = self._fry(cli._Encoder("libx265", False, "software, 2-pass ABR", None))[0]
+        command = self._fry(cli._Encoder("libx265", False, "software, single-pass bitrate control", None))[0]
         self.assertIn("libx265", command)
-        self.assertIn("scale=320:240,fps=12,format=yuv420p", command)
+        filters = command[command.index("-vf") + 1]
+        self.assertIn("scale=320:240", filters)
+        self.assertIn("setsar=1,fps=12", filters)
+        self.assertIn("eq=contrast=", filters)
         self.assertEqual(command[command.index("-b:v") + 1], "250k")
         self.assertEqual(command[command.index("-pix_fmt") + 1], "yuv420p")
         self.assertEqual(command[command.index("-c:a") + 1], "libmp3lame")

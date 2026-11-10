@@ -36,7 +36,9 @@ jobs:
       - name: Check the executable
         run: |
           $binary = Get-ChildItem dist/airfryer-*.exe | Select-Object -First 1
-          & $binary.FullName --version
+          & $binary.FullName
+          if ($LASTEXITCODE -ne 2) { throw "Expected usage with exit code 2" }
+          $global:LASTEXITCODE = 0
       - name: Package release files
         run: python scripts/package_release.py
       - uses: actions/upload-artifact@v4
@@ -61,7 +63,11 @@ jobs:
           "$buildEnv/bin/python" -m build
           "$buildEnv/bin/python" scripts/build_portable.py
           "$buildEnv/bin/python" scripts/build_binary.py
-          dist/airfryer-0.1.0-linux64 --version
+          if dist/airfryer-0.1.0-linux64; then
+            exit 1
+          else
+            test "$?" -eq 2
+          fi
           "$buildEnv/bin/python" scripts/package_release.py
       - uses: actions/upload-artifact@v4
         with:

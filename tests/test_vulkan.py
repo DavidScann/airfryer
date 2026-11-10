@@ -117,7 +117,10 @@ class VulkanDetectionTests(unittest.TestCase):
         self.assertEqual(command[command.index("-i") + 1], source)
         self.assertLess(command.index("-hwaccel"), command.index("-i"))
         self.assertIn("vulkan=pc:1", command)
-        self.assertIn("scale_vulkan=format=nv12:w=1280:h=720,fps=30", command)
+        filters = command[command.index("-vf") + 1]
+        self.assertTrue(filters.startswith("scale_vulkan=format=nv12:w=1280:h=720"))
+        self.assertIn("hwdownload,format=nv12,fps=30", filters)
+        self.assertTrue(filters.endswith("format=nv12,hwupload"))
         self.assertEqual(command[-1], os.devnull)
         self.assertEqual(execute.call_args.kwargs["timeout"], 30)
         self.assertFalse(execute.call_args.kwargs.get("shell", False))
@@ -144,6 +147,7 @@ class VulkanCommandTests(unittest.TestCase):
         self.commands = []
         with patch.object(cli, "resolve_tool", side_effect=lambda value, name: name), \
                 patch.object(cli, "choose_encoder", return_value=self.encoder), \
+                patch.object(cli, "probe_vulkan_decode", return_value=(decode, None if decode else "unsupported")), \
                 patch.object(cli, "_run_encode", side_effect=self._encode), \
                 contextlib.redirect_stdout(io.StringIO()) as output:
             code = cli.run(str(self.source), str(self.output))
@@ -157,7 +161,10 @@ class VulkanCommandTests(unittest.TestCase):
         self.assertLess(command.index("-init_hw_device"), command.index("-i"))
         self.assertLess(command.index("-hwaccel"), command.index("-i"))
         self.assertIn("vulkan=pc:1", command)
-        self.assertIn("scale_vulkan=format=nv12:w=320:h=240,fps=12,format=yuv420p", command)
+        filters = command[command.index("-vf") + 1]
+        self.assertTrue(filters.startswith("scale_vulkan=format=nv12:w=320:h=240"))
+        self.assertIn("hwdownload,format=nv12", filters)
+        self.assertTrue(filters.endswith("format=nv12,hwupload"))
         self.assertEqual(command[command.index("-quality") + 1], "0")
         self.assertEqual(command[command.index("-rc_mode") + 1], "auto")
         self.assertEqual(command[command.index("-b:v") + 1], "250k")
@@ -173,7 +180,11 @@ class VulkanCommandTests(unittest.TestCase):
         command = self.commands[0]
         self.assertNotIn("-hwaccel", command)
         self.assertIn("hevc_vulkan", command)
-        self.assertIn("scale=320:240,fps=12,format=nv12,hwupload", command)
+        filters = command[command.index("-vf") + 1]
+        self.assertIn("scale=320:240", filters)
+        self.assertIn("setsar=1,fps=12", filters)
+        self.assertIn("eq=contrast=", filters)
+        self.assertTrue(filters.endswith("format=nv12,hwupload"))
         self.assertIn("Done:", output)
 
 

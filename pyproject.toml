@@ -18,7 +18,7 @@ classifiers = [
   "Topic :: Multimedia :: Video :: Conversion",
 ]
 # The CLI needs only the Python standard library. FFmpeg and ffprobe are
-# installed separately and used from PATH or an explicit flag.
+# installed separately and used from PATH.
 dependencies = []
 
 [project.scripts]
