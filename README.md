@@ -8,8 +8,9 @@ Video GPU detection and acceleration kept underneath a fixed FFmpeg recipe.
 airfryer input.mov fried.mp4
 ```
 
-Video is shrunk to **66×50 pixels**, then stretched back to **320×240** with
-nearest-neighbour scaling for large, hard-edged pixels. Every output is MP4:
+Video is softly downscaled to **160×120**, damaged with heavy DCT compression,
+then enlarged to **320×240** with bilinear scaling and Gaussian blur. The
+result has smeared detail and soft compression blocks. Every output is MP4:
 **4:3, 12 fps, 250 kbps video**, with crushed colour levels, exaggerated
 contrast and saturation, and
 **32 kbps mono MP3**. Audio is boosted and clipped, then normalized toward
@@ -27,8 +28,8 @@ arguments prints usage and exits with code 2. There are no flags.
   encoding. General Vulkan graphics support alone is insufficient.
 
 The FFmpeg build needs `libx265` for software fallback and `libmp3lame` for
-audio. The filters include `scale`, `fps`, `eq`, `lut`, `asoftclip`, and
-`loudnorm`. Check your installation with:
+audio. The filters include `scale`, `fps`, `eq`, `spp`, `gblur`, `lut`,
+`asoftclip`, and `loudnorm`. Check your installation with:
 
 ```text
 ffmpeg -version
@@ -134,18 +135,23 @@ can encode it. If none of those codecs works on a GPU, it uses `libx265`.
 All output uses single-pass bitrate control.
 
 A short source probe checks Vulkan decoding and the complete video filter
-chain on the selected GPU. When supported, decoding, both nearest-neighbour
-scaling steps, and encoding use Vulkan. Colour effects run on the CPU after the
-frames have been scaled to 320×240, with explicit transfers between GPU and
-CPU memory. If decoding is unsupported, decoding and filtering run on the
-CPU while encoding stays on the GPU.
+chain on the selected GPU. When supported, decoding, both bilinear scaling
+steps, and encoding use Vulkan. The small 160×120 frames are downloaded for
+CPU colour processing and DCT compression, then uploaded for GPU enlargement.
+The enlarged frames are downloaded for blur and range clipping before GPU
+encoding. If decoding is unsupported, decoding and filtering run on the CPU
+while encoding stays on the GPU.
 
-The intermediate resolution is 50 pixels tall and 66 pixels wide; upscaling
-repeats those pixels without smoothing. Scaling forces square pixels so the
-result displays at 4:3 regardless of the source aspect ratio. Contrast and
-saturation are exaggerated, colour levels are quantized into coarse steps,
-and output is tagged with limited colour
-range. Audio is clipped before loudness normalization, then encoded as
+The visual recipe follows the compression damage used in deep-fried images:
+strong contrast and saturation, loss of fine detail, blocking, and ringing.
+FFmpeg's [`spp` filter](https://ffmpeg.org/ffmpeg-filters.html#spp) compresses
+and decompresses frames using DCT quantization. It runs at high quantization
+before enlargement, so its block artifacts become visible at the final size.
+Bilinear interpolation and Gaussian blur soften the transitions.
+
+Scaling forces square pixels so the result displays at 4:3 regardless of the
+source aspect ratio. Colour values are clipped to limited range. Audio is
+clipped before loudness normalization, then encoded as
 32 kbps, 22.05 kHz mono MP3. MP4 includes `faststart` for streaming playback.
 HEVC and AV1 playback depends on the receiving application and device.
 
@@ -171,7 +177,7 @@ python scripts/package_release.py
 ```
 
 The test suite includes real FFmpeg regressions for video geometry, frame
-rate, colour quantization, audio distortion and loudness, and video-only
+rate, softened edges, colour range, audio distortion and loudness, and video-only
 sources. Those integration tests skip when the required tools or codecs are
 unavailable. Vulkan device selection and decode fallback are also tested.
 

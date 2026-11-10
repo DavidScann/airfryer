@@ -49,6 +49,22 @@ class ReviewRegressionTests(unittest.TestCase):
         ])
         self.assertGreater(filters.index("hwdownload"), 1)
 
+    def test_vulkan_compression_runs_on_cpu_between_gpu_scaling_steps(self):
+        filters = cli._vulkan_filter([
+            "scale=160:120:flags=bilinear", "format=yuv420p", "spp=quality=1:qp=63:mode=hard",
+            "scale=320:240:flags=bilinear", "gblur=sigma=0.6"
+        ], True).split(",")
+        compression = filters.index("spp=quality=1:qp=63:mode=hard")
+        enlargement = next((i for i, value in enumerate(filters)
+                            if value.startswith("scale_vulkan=") and ":w=320:h=240" in value), None)
+        self.assertIsNotNone(enlargement, "Enlargement must remain on the GPU after CPU compression")
+        self.assertLess(compression, enlargement)
+        self.assertIn("hwdownload", filters[:compression])
+        self.assertIn("hwupload", filters[compression:enlargement])
+        blur = filters.index("gblur=sigma=0.6")
+        self.assertIn("hwdownload", filters[enlargement:blur])
+        self.assertTrue(filters[-1] == "hwupload")
+
     def test_new_directory_destination_keeps_upstream_naming_behaviour(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -150,27 +166,26 @@ class FFmpegIntegrationTests(unittest.TestCase):
         self.assertEqual([stream["codec_type"] for stream in streams], ["video"])
         self.assertEqual(streams[0]["avg_frame_rate"], "12/1")
 
-    def test_colour_recipe_crushes_a_smooth_luma_gradient_into_steps(self):
+    def test_colour_recipe_keeps_luma_within_limited_range(self):
         result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
                                  "nullsrc=s=320x240,geq=lum='16+219*X/W':cb=128:cr=128",
                                  "-vf", ",".join(cli.FRY_FILTERS), "-frames:v", "1", "-pix_fmt", "yuv420p",
                                  "-f", "rawvideo", "-"], check=True, capture_output=True)
         luma = result.stdout[:320 * 240]
-        self.assertLessEqual(len(set(luma)), 16, "Pixel format conversion alone does not crush colour levels")
         self.assertGreaterEqual(min(luma), 16)
         self.assertLessEqual(max(luma), 235)
 
-    def test_pixelated_recipe_has_only_50_rows_and_66_columns_of_detail(self):
+    def test_blurry_recipe_softens_edges_without_a_hard_pixel_grid(self):
         result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
-                                 "nullsrc=s=640x480,geq=lum='16+mod(17*X+29*Y,219)':cb=128:cr=128",
+                                 "nullsrc=s=640x480,geq=lum='if(lt(X,W/2),32,224)':cb=128:cr=128",
                                  "-vf", ",".join(cli.FRY_FILTERS), "-frames:v", "1", "-pix_fmt", "yuv420p",
                                  "-f", "rawvideo", "-"], check=True, capture_output=True)
         luma = result.stdout[:320 * 240]
         self.assertEqual(len(luma), 320 * 240)
-        rows = {luma[y * 320:(y + 1) * 320] for y in range(240)}
-        columns = {luma[x::320] for x in range(320)}
-        self.assertLessEqual(len(rows), 50, "Upscaling must repeat the 50 source rows without smoothing")
-        self.assertLessEqual(len(columns), 66, "Upscaling must repeat the 66 source columns without smoothing")
+        row = luma[120 * 320:121 * 320]
+        self.assertLess(max(abs(first - second) for first, second in zip(row, row[1:])), 100,
+                        "Blurred edges must spread the transition across several pixels")
+        self.assertGreater(len(set(row)), 6, "Smooth enlargement must create blended tones along an edge")
 
 
 if __name__ == "__main__":

@@ -19,14 +19,16 @@ FRY_AUDIO_KBPS = 32
 FRY_LOUDNESS_I = -16
 FRY_CONTAINER = "mp4"
 FRY_FILTERS = [
-    "scale=66:50:flags=neighbor",
-    "scale=320:240:flags=neighbor",
+    "scale=160:120:flags=bilinear",
     "setsar=1",
     "fps=" + str(FRY_FPS),
     "scale=out_range=tv",
     "format=yuv420p",
-    "eq=contrast=1.6:brightness=-0.08:saturation=1.8",
-    "lut=y='clip(floor(val/16)*16,16,235)':u='clip(floor(val/32)*32,16,240)':v='clip(floor(val/32)*32,16,240)'",
+    "eq=contrast=1.5:brightness=-0.02:saturation=1.8",
+    "spp=quality=1:qp=63:mode=hard",
+    "scale=320:240:flags=bilinear",
+    "gblur=sigma=2.0",
+    "lut=y='clip(val,16,235)':u='clip(val,16,240)':v='clip(val,16,240)'",
     "setparams=range=limited",
 ]
 FRY_AUDIO_FILTER = "volume=4,asoftclip=type=hard:threshold=0.2,loudnorm=I=" + str(FRY_LOUDNESS_I) + ":TP=-2:LRA=7"
@@ -63,8 +65,8 @@ USAGE = """airfryer - deep fry a video into a degraded mess
 Usage:
   airfryer <source> <destination>
 
-Deep fry a source video down to 66x50 pixels, then stretch it to 320x240 at
-12 fps with very low bitrate, crushed colour range, and crushed MP3 audio.
+Deep fry a source video with heavy compression damage, smooth enlargement,
+and blur: 320x240 at 12 fps with crushed colour range and crushed MP3 audio.
 GPU acceleration via Vulkan Video is used when available.
 
 The destination is either a file path or a directory. A directory receives
@@ -347,22 +349,32 @@ def probe_vulkan(ffmpeg, name, quality):
 def _vulkan_filter(filters, decode):
     if not decode:
         return ",".join(filters + ["format=nv12", "hwupload"])
-    scales = []
-    remaining = list(filters)
-    while remaining and remaining[0].startswith("scale="):
-        parts = remaining[0][6:].split(":")
-        if len(parts) < 2 or any("=" in value for value in parts[:2]):
-            break
-        value = remaining.pop(0)
-        width, height = parts[:2]
-        scale = "scale_vulkan=format=nv12:w=" + width + ":h=" + height
-        if "flags=neighbor" in value:
-            scale += ":scaler=nearest"
-        scales.append(scale)
-    # The colour effects need CPU frames. Keep GPU decoding/scaling/encoding
-    # and transfer only the small, scaled frames for those filters.
-    return ",".join((scales or ["scale_vulkan=format=nv12"]) + ["hwdownload", "format=nv12"]
-                    + remaining + ["format=nv12", "hwupload"])
+    chain = []
+    gpu_frames = True
+    for value in filters:
+        parts = value[6:].split(":") if value.startswith("scale=") else []
+        spatial_scale = len(parts) >= 2 and not any("=" in part for part in parts[:2])
+        if spatial_scale:
+            if not gpu_frames:
+                chain += ["format=nv12", "hwupload"]
+                gpu_frames = True
+            width, height = parts[:2]
+            scale = "scale_vulkan=format=nv12:w=" + width + ":h=" + height
+            if "flags=neighbor" in value:
+                scale += ":scaler=nearest"
+            elif "flags=bilinear" in value:
+                scale += ":scaler=bilinear"
+            chain.append(scale)
+        else:
+            # Compression and colour filters need CPU frames. Transfer only
+            # the small frames, then resume GPU scaling or encoding.
+            if gpu_frames:
+                chain += ["hwdownload", "format=nv12"]
+                gpu_frames = False
+            chain.append(value)
+    if not gpu_frames:
+        chain += ["format=nv12", "hwupload"]
+    return ",".join(chain)
 
 
 def _vulkan_decode_args():
