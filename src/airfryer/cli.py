@@ -19,6 +19,7 @@ FRY_AUDIO_KBPS = 32
 FRY_LOUDNESS_I = -16
 FRY_CONTAINER = "mp4"
 FRY_FILTERS = [
+    "scale=66:50:flags=neighbor",
     "scale=320:240:flags=neighbor",
     "setsar=1",
     "fps=" + str(FRY_FPS),
@@ -62,9 +63,9 @@ USAGE = """airfryer - deep fry a video into a degraded mess
 Usage:
   airfryer <source> <destination>
 
-Deep fry a source video into a degraded output: 320x240 at 12 fps, very low
-bitrate, crushed colour range, and crushed MP3 audio. GPU acceleration via
-Vulkan Video is used when available.
+Deep fry a source video down to 66x50 pixels, then stretch it to 320x240 at
+12 fps with very low bitrate, crushed colour range, and crushed MP3 audio.
+GPU acceleration via Vulkan Video is used when available.
 
 The destination is either a file path or a directory. A directory receives
 <sourceBase>.fry.<container-ext>.
@@ -346,16 +347,22 @@ def probe_vulkan(ffmpeg, name, quality):
 def _vulkan_filter(filters, decode):
     if not decode:
         return ",".join(filters + ["format=nv12", "hwupload"])
-    scale = "scale_vulkan=format=nv12"
+    scales = []
     remaining = list(filters)
-    if remaining and remaining[0].startswith("scale="):
-        width, height = remaining.pop(0)[6:].split(":")[:2]
-        scale += ":w=" + width + ":h=" + height
-        if "flags=neighbor" in filters[0]:
+    while remaining and remaining[0].startswith("scale="):
+        parts = remaining[0][6:].split(":")
+        if len(parts) < 2 or any("=" in value for value in parts[:2]):
+            break
+        value = remaining.pop(0)
+        width, height = parts[:2]
+        scale = "scale_vulkan=format=nv12:w=" + width + ":h=" + height
+        if "flags=neighbor" in value:
             scale += ":scaler=nearest"
+        scales.append(scale)
     # The colour effects need CPU frames. Keep GPU decoding/scaling/encoding
     # and transfer only the small, scaled frames for those filters.
-    return ",".join([scale, "hwdownload", "format=nv12"] + remaining + ["format=nv12", "hwupload"])
+    return ",".join((scales or ["scale_vulkan=format=nv12"]) + ["hwdownload", "format=nv12"]
+                    + remaining + ["format=nv12", "hwupload"])
 
 
 def _vulkan_decode_args():

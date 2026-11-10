@@ -39,6 +39,16 @@ class ReviewRegressionTests(unittest.TestCase):
         self.assertLess(filters.index("hwdownload"), colour)
         self.assertGreater(filters.index("hwupload"), colour)
 
+    def test_vulkan_keeps_downscale_and_upscale_on_the_gpu(self):
+        filters = cli._vulkan_filter([
+            "scale=66:50:flags=neighbor", "scale=320:240:flags=neighbor", "setsar=1"
+        ], True).split(",")
+        self.assertEqual(filters[:2], [
+            "scale_vulkan=format=nv12:w=66:h=50:scaler=nearest",
+            "scale_vulkan=format=nv12:w=320:h=240:scaler=nearest",
+        ])
+        self.assertGreater(filters.index("hwdownload"), 1)
+
     def test_new_directory_destination_keeps_upstream_naming_behaviour(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -149,6 +159,18 @@ class FFmpegIntegrationTests(unittest.TestCase):
         self.assertLessEqual(len(set(luma)), 16, "Pixel format conversion alone does not crush colour levels")
         self.assertGreaterEqual(min(luma), 16)
         self.assertLessEqual(max(luma), 235)
+
+    def test_pixelated_recipe_has_only_50_rows_and_66_columns_of_detail(self):
+        result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                                 "nullsrc=s=640x480,geq=lum='16+mod(17*X+29*Y,219)':cb=128:cr=128",
+                                 "-vf", ",".join(cli.FRY_FILTERS), "-frames:v", "1", "-pix_fmt", "yuv420p",
+                                 "-f", "rawvideo", "-"], check=True, capture_output=True)
+        luma = result.stdout[:320 * 240]
+        self.assertEqual(len(luma), 320 * 240)
+        rows = {luma[y * 320:(y + 1) * 320] for y in range(240)}
+        columns = {luma[x::320] for x in range(320)}
+        self.assertLessEqual(len(rows), 50, "Upscaling must repeat the 50 source rows without smoothing")
+        self.assertLessEqual(len(columns), 66, "Upscaling must repeat the 66 source columns without smoothing")
 
 
 if __name__ == "__main__":

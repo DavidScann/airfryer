@@ -8,8 +8,10 @@ Video GPU detection and acceleration kept underneath a fixed FFmpeg recipe.
 airfryer input.mov fried.mp4
 ```
 
-Every output is MP4: **320×240, stretched to 4:3, 12 fps, 250 kbps video**,
-with crushed colour levels, exaggerated contrast and saturation, and
+Video is shrunk to **66×50 pixels**, then stretched back to **320×240** with
+nearest-neighbour scaling for large, hard-edged pixels. Every output is MP4:
+**4:3, 12 fps, 250 kbps video**, with crushed colour levels, exaggerated
+contrast and saturation, and
 **32 kbps mono MP3**. Audio is boosted and clipped, then normalized toward
 **−16 LUFS** with a **−2 dBTP** target before MP3 encoding.
 
@@ -132,15 +134,17 @@ can encode it. If none of those codecs works on a GPU, it uses `libx265`.
 All output uses single-pass bitrate control.
 
 A short source probe checks Vulkan decoding and the complete video filter
-chain on the selected GPU. When supported, decoding, nearest-neighbour
-scaling, and encoding use Vulkan. Colour effects run on the CPU after the
+chain on the selected GPU. When supported, decoding, both nearest-neighbour
+scaling steps, and encoding use Vulkan. Colour effects run on the CPU after the
 frames have been scaled to 320×240, with explicit transfers between GPU and
 CPU memory. If decoding is unsupported, decoding and filtering run on the
 CPU while encoding stays on the GPU.
 
-Scaling forces square pixels so the result displays at 4:3 regardless of the
-source aspect ratio. Contrast and saturation are exaggerated, colour levels
-are quantized into coarse steps, and output is tagged with limited colour
+The intermediate resolution is 50 pixels tall and 66 pixels wide; upscaling
+repeats those pixels without smoothing. Scaling forces square pixels so the
+result displays at 4:3 regardless of the source aspect ratio. Contrast and
+saturation are exaggerated, colour levels are quantized into coarse steps,
+and output is tagged with limited colour
 range. Audio is clipped before loudness normalization, then encoded as
 32 kbps, 22.05 kHz mono MP3. MP4 includes `faststart` for streaming playback.
 HEVC and AV1 playback depends on the receiving application and device.

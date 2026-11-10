@@ -66,7 +66,8 @@ class FryTests(unittest.TestCase):
         self.assertLess(command.index("-hwaccel"), command.index("-i"))
         self.assertIn("vulkan=pc:1", command)
         filters = command[command.index("-vf") + 1]
-        self.assertTrue(filters.startswith("scale_vulkan=format=nv12:w=320:h=240"))
+        self.assertTrue(filters.startswith("scale_vulkan=format=nv12:w=66:h=50"))
+        self.assertIn("scale_vulkan=format=nv12:w=320:h=240:scaler=nearest,hwdownload", filters)
         self.assertIn("hwdownload,format=nv12", filters)
         self.assertTrue(filters.endswith("format=nv12,hwupload"))
         self.assertEqual(command[command.index("-quality") + 1], "0")
