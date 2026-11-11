@@ -175,6 +175,40 @@ class FFmpegIntegrationTests(unittest.TestCase):
         self.assertGreaterEqual(min(luma), 16)
         self.assertLessEqual(max(luma), 235)
 
+    def test_colour_recipe_corrupts_hue_and_overdrives_muted_colours(self):
+        result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                                 "nullsrc=s=320x240,geq=lum=128:cb=140:cr=140",
+                                 "-vf", ",".join(cli.FRY_FILTERS), "-frames:v", "1", "-pix_fmt", "yuv420p",
+                                 "-f", "rawvideo", "-"], check=True, capture_output=True)
+        pixels = 320 * 240
+        chroma_pixels = pixels // 4
+        u = sum(result.stdout[pixels:pixels + chroma_pixels]) / chroma_pixels - 128
+        v = sum(result.stdout[pixels + chroma_pixels:]) / chroma_pixels - 128
+        hue_shift = math.degrees(math.atan2(v, u)) - 45
+        hue_shift = (hue_shift + 180) % 360 - 180
+        self.assertGreater(abs(hue_shift), 20, "Colour damage must change hues, not only saturation")
+        self.assertGreater(math.hypot(u, v) / math.hypot(12, 12), 2.5,
+                           "Muted colours must be driven into visibly excessive saturation")
+
+    def test_colour_recipe_bleeds_chroma_past_brightness_edges(self):
+        result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                                 "nullsrc=s=640x480,geq=lum='if(lt(X,W/2),64,192)':"
+                                 "cb='if(lt(X,W/2),112,144)':cr='if(lt(X,W/2),112,144)'",
+                                 "-vf", ",".join(cli.FRY_FILTERS), "-frames:v", "1", "-pix_fmt", "yuv420p",
+                                 "-f", "rawvideo", "-"], check=True, capture_output=True)
+        pixels = 320 * 240
+        u_row = result.stdout[pixels + 60 * 160:pixels + 61 * 160]
+        v_row = result.stdout[pixels + pixels // 4 + 60 * 160:pixels + pixels // 4 + 61 * 160]
+        for row in (u_row, v_row):
+            self.assertGreater(abs(row[20] - row[140]), 10, "Both chroma planes must retain a measurable edge")
+
+        def midpoint(row):
+            middle = (row[20] + row[140]) / 2
+            return min(range(60, 100), key=lambda index: abs(row[index] - middle))
+
+        self.assertGreaterEqual(abs(midpoint(u_row) - midpoint(v_row)), 4,
+                                "Colour channels must smear beyond the same edge")
+
     def test_blurry_recipe_softens_edges_without_a_hard_pixel_grid(self):
         result = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
                                  "nullsrc=s=640x480,geq=lum='if(lt(X,W/2),32,224)':cb=128:cr=128",

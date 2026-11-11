@@ -11,8 +11,8 @@ airfryer input.mov fried.mp4
 Video is softly downscaled to **160×120**, damaged with heavy DCT compression,
 then enlarged to **320×240** with bilinear scaling and Gaussian blur. The
 result has smeared detail and soft compression blocks. Every output is MP4:
-**4:3, 12 fps, 250 kbps video**, with crushed colour levels, exaggerated
-contrast and saturation, and
+**4:3, 12 fps, 250 kbps video**, with shifted hues, overdriven saturation,
+crushed colour bands, bleeding colour edges, and
 **32 kbps mono MP3**. Audio is boosted and clipped, then normalized toward
 **−16 LUFS** with a **−2 dBTP** target before MP3 encoding.
 
@@ -28,8 +28,8 @@ arguments prints usage and exits with code 2. There are no flags.
   encoding. General Vulkan graphics support alone is insufficient.
 
 The FFmpeg build needs `libx265` for software fallback and `libmp3lame` for
-audio. The filters include `scale`, `fps`, `eq`, `spp`, `gblur`, `lut`,
-`asoftclip`, and `loudnorm`. Check your installation with:
+audio. The filters include `scale`, `fps`, `eq`, `hue`, `spp`, `gblur`, `lut`,
+`chromashift`, `asoftclip`, and `loudnorm`. Check your installation with:
 
 ```text
 ffmpeg -version
@@ -143,7 +143,10 @@ encoding. If decoding is unsupported, decoding and filtering run on the CPU
 while encoding stays on the GPU.
 
 The visual recipe follows the compression damage used in deep-fried images:
-strong contrast and saturation, loss of fine detail, blocking, and ringing.
+strong contrast and saturation, corrupted hues, loss of fine detail, blocking,
+and ringing. A fixed −30° hue rotation pushes colours away from the source.
+Coarse luma and chroma quantization crushes the palette before compression
+and enlargement; opposing chroma offsets smear colour beyond brightness edges.
 FFmpeg's [`spp` filter](https://ffmpeg.org/ffmpeg-filters.html#spp) compresses
 and decompresses frames using DCT quantization. It runs at high quantization
 before enlargement, so its block artifacts become visible at the final size.
@@ -177,9 +180,10 @@ python scripts/package_release.py
 ```
 
 The test suite includes real FFmpeg regressions for video geometry, frame
-rate, softened edges, colour range, audio distortion and loudness, and video-only
-sources. Those integration tests skip when the required tools or codecs are
-unavailable. Vulkan device selection and decode fallback are also tested.
+rate, softened edges, hue damage, colour bleed and range, audio distortion and
+loudness, and video-only sources. Those integration tests skip when the
+required tools or codecs are unavailable. Vulkan device selection and decode
+fallback are also tested.
 
 Outputs are written to `dist/`:
 

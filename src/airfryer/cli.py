@@ -24,10 +24,17 @@ FRY_FILTERS = [
     "fps=" + str(FRY_FPS),
     "scale=out_range=tv",
     "format=yuv420p",
-    "eq=contrast=1.5:brightness=-0.02:saturation=1.8",
+    "eq=contrast=1.7:brightness=-0.03:saturation=3.2:gamma=0.85",
+    "hue=h=-30",
+    # Crush the palette before compression and smooth enlargement so the
+    # colour bands smear into the blocks rather than forming a pixel grid.
+    "lut=y='clip(16+floor((val-16)/20)*20,16,235)':"
+    "u='clip(128+round((val-128)/16)*16,16,240)':"
+    "v='clip(128+round((val-128)/16)*16,16,240)'",
     "spp=quality=1:qp=63:mode=hard",
     "scale=320:240:flags=bilinear",
     "gblur=sigma=2.0",
+    "chromashift=cbh=-3:cbv=1:crh=3:crv=-1:edge=smear",
     "lut=y='clip(val,16,235)':u='clip(val,16,240)':v='clip(val,16,240)'",
     "setparams=range=limited",
 ]
@@ -66,7 +73,7 @@ Usage:
   airfryer <source> <destination>
 
 Deep fry a source video with heavy compression damage, smooth enlargement,
-and blur: 320x240 at 12 fps with crushed colour range and crushed MP3 audio.
+and blur: 320x240 at 12 fps with corrupted, bleeding colours and crushed MP3 audio.
 GPU acceleration via Vulkan Video is used when available.
 
 The destination is either a file path or a directory. A directory receives
